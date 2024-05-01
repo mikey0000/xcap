@@ -2,18 +2,20 @@ use image::RgbaImage;
 use std::{ffi::c_void, mem};
 use std::ptr::null_mut;
 use windows::Win32::{
-    Foundation::HWND,
+    Foundation::{HWND, BOOL},
     Graphics::{
         Dwm::DwmIsCompositionEnabled,
         Gdi::{
             BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, GetCurrentObject, GetDIBits,
             GetObjectW, SelectObject, BITMAP, BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS,
-            OBJ_BITMAP, SRCCOPY, GdiplusStartup, GdiplusShutdown, SetProcessDPIAware,
-            GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN
+            OBJ_BITMAP, SRCCOPY
         },
+        GdiPlus::{
+            GdiplusStartup, GdiplusShutdown, GdiplusStartupInput
+        }
     },
     Storage::Xps::{PrintWindow, PRINT_WINDOW_FLAGS},
-    UI::WindowsAndMessaging::GetDesktopWindow,
+    UI::WindowsAndMessaging::{GetDesktopWindow, GetSystemMetrics, SetProcessDPIAware, SM_CXSCREEN, SM_CYSCREEN},
 };
 
 use crate::{
@@ -81,6 +83,22 @@ fn to_rgba_image(
 #[allow(unused)]
 pub fn capture_monitor(x: i32, y: i32, width: i32, height: i32) -> XCapResult<RgbaImage> {
     unsafe {
+        let mut gdiplus_startup_input = GdiplusStartupInput {
+            GdiplusVersion: 1,
+            DebugEventCallback: 0,
+            SuppressBackgroundThread: BOOL::from(false),
+            SuppressExternalCodecs: BOOL::from(false),
+        };
+        let mut gdiplus_token: usize = 0;
+
+        GdiplusStartup(
+            &mut gdiplus_token as *mut usize,
+            &mut gdiplus_startup_input as *mut GdiplusStartupInput,
+            null_mut(),
+        );
+
+
+        SetProcessDPIAware();
         let hwnd = GetDesktopWindow();
         let box_hdc_desktop_window = BoxHDC::from(hwnd);
 
@@ -111,6 +129,8 @@ pub fn capture_monitor(x: i32, y: i32, width: i32, height: i32) -> XCapResult<Rg
             SRCCOPY,
         )?;
 
+        GdiplusShutdown(gdiplus_token);
+
         to_rgba_image(box_hdc_mem, box_h_bitmap, width, height)
     }
 }
@@ -120,90 +140,90 @@ pub fn capture_window(hwnd: HWND, scale_factor: f32) -> XCapResult<RgbaImage> {
     unsafe {
         let mut gdiplus_startup_input = GdiplusStartupInput {
             GdiplusVersion: 1,
-            DebugEventCallback: None,
-            SuppressBackgroundThread: 0,
-            SuppressExternalCodecs: 0,
+            DebugEventCallback: 0,
+            SuppressBackgroundThread: BOOL::from(false),
+            SuppressExternalCodecs: BOOL::from(false),
         };
-        let mut gdiplus_token: ULONG_PTR = 0;
+        let mut gdiplus_token: usize = 0;
 
         GdiplusStartup(
-            &mut gdiplus_token as *mut ULONG_PTR,
+            &mut gdiplus_token as *mut usize,
             &mut gdiplus_startup_input as *mut GdiplusStartupInput,
-            ptr::null_mut(),
+            null_mut(),
         );
 
-        {
-            SetProcessDPIAware();
-            let box_hdc_window: BoxHDC = BoxHDC::from(hwnd);
-            let rect = get_window_rect(hwnd)?;
-            let mut width = rect.right - rect.left;
-            let mut height = rect.bottom - rect.top;
 
-            if width == 0 {
-                width = GetSystemMetrics(SM_CXSCREEN);
-            }
-            if height == 0 {
-                height = GetSystemMetrics(SM_CYSCREEN);
-            }
+        SetProcessDPIAware();
+        let box_hdc_window: BoxHDC = BoxHDC::from(hwnd);
+        let rect = get_window_rect(hwnd)?;
+        let mut width = rect.right - rect.left;
+        let mut height = rect.bottom - rect.top;
 
-            let hgdi_obj = GetCurrentObject(*box_hdc_window, OBJ_BITMAP);
-            let mut bitmap = BITMAP::default();
-
-            let mut horizontal_scale = 1.0;
-            let mut vertical_scale = 1.0;
-
-            if GetObjectW(
-                hgdi_obj,
-                mem::size_of::<BITMAP>() as i32,
-                Some(&mut bitmap as *mut BITMAP as *mut c_void),
-            ) != 0
-            {
-                width = bitmap.bmWidth;
-                height = bitmap.bmHeight;
-            }
-
-            width = (width as f32 * scale_factor) as i32;
-            height = (height as f32 * scale_factor) as i32;
-
-            // 内存中的HDC，使用 DeleteDC 函数释放
-            // https://learn.microsoft.com/zh-cn/windows/win32/api/wingdi/nf-wingdi-createcompatibledc
-            let box_hdc_mem = BoxHDC::new(CreateCompatibleDC(*box_hdc_window), None);
-            let box_h_bitmap = BoxHBITMAP::new(CreateCompatibleBitmap(*box_hdc_window, width, height));
-
-            let previous_object = SelectObject(*box_hdc_mem, *box_h_bitmap);
-
-            let mut is_success = false;
-
-            // https://webrtc.googlesource.com/src.git/+/refs/heads/main/modules/desktop_capture/win/window_capturer_win_gdi.cc#301
-            if get_os_major_version() >= 8 {
-                is_success = PrintWindow(hwnd, *box_hdc_mem, PRINT_WINDOW_FLAGS(2)).as_bool();
-            }
-
-            if !is_success && DwmIsCompositionEnabled()?.as_bool() {
-                is_success = PrintWindow(hwnd, *box_hdc_mem, PRINT_WINDOW_FLAGS(0)).as_bool();
-            }
-
-            if !is_success {
-                is_success = PrintWindow(hwnd, *box_hdc_mem, PRINT_WINDOW_FLAGS(3)).as_bool();
-            }
-
-            if !is_success {
-                is_success = BitBlt(
-                    *box_hdc_mem,
-                    0,
-                    0,
-                    width,
-                    height,
-                    *box_hdc_window,
-                    0,
-                    0,
-                    SRCCOPY,
-                )
-                    .is_ok();
-            }
-
-            SelectObject(*box_hdc_mem, previous_object);
+        if width == 0 {
+            width = GetSystemMetrics(SM_CXSCREEN);
         }
+        if height == 0 {
+            height = GetSystemMetrics(SM_CYSCREEN);
+        }
+
+        let hgdi_obj = GetCurrentObject(*box_hdc_window, OBJ_BITMAP);
+        let mut bitmap = BITMAP::default();
+
+        let mut horizontal_scale = 1.0;
+        let mut vertical_scale = 1.0;
+
+        if GetObjectW(
+            hgdi_obj,
+            mem::size_of::<BITMAP>() as i32,
+            Some(&mut bitmap as *mut BITMAP as *mut c_void),
+        ) != 0
+        {
+            width = bitmap.bmWidth;
+            height = bitmap.bmHeight;
+        }
+
+        width = (width as f32 * scale_factor) as i32;
+        height = (height as f32 * scale_factor) as i32;
+
+        // 内存中的HDC，使用 DeleteDC 函数释放
+        // https://learn.microsoft.com/zh-cn/windows/win32/api/wingdi/nf-wingdi-createcompatibledc
+        let box_hdc_mem = BoxHDC::new(CreateCompatibleDC(*box_hdc_window), None);
+        let box_h_bitmap = BoxHBITMAP::new(CreateCompatibleBitmap(*box_hdc_window, width, height));
+
+        let previous_object = SelectObject(*box_hdc_mem, *box_h_bitmap);
+
+        let mut is_success = false;
+
+        // https://webrtc.googlesource.com/src.git/+/refs/heads/main/modules/desktop_capture/win/window_capturer_win_gdi.cc#301
+        if get_os_major_version() >= 8 {
+            is_success = PrintWindow(hwnd, *box_hdc_mem, PRINT_WINDOW_FLAGS(2)).as_bool();
+        }
+
+        if !is_success && DwmIsCompositionEnabled()?.as_bool() {
+            is_success = PrintWindow(hwnd, *box_hdc_mem, PRINT_WINDOW_FLAGS(0)).as_bool();
+        }
+
+        if !is_success {
+            is_success = PrintWindow(hwnd, *box_hdc_mem, PRINT_WINDOW_FLAGS(3)).as_bool();
+        }
+
+        if !is_success {
+            is_success = BitBlt(
+                *box_hdc_mem,
+                0,
+                0,
+                width,
+                height,
+                *box_hdc_window,
+                0,
+                0,
+                SRCCOPY,
+            )
+                .is_ok();
+        }
+
+        SelectObject(*box_hdc_mem, previous_object);
+
         GdiplusShutdown(gdiplus_token);
 
         to_rgba_image(box_hdc_mem, box_h_bitmap, width, height)
