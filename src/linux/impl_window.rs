@@ -167,6 +167,8 @@ impl ImplWindow {
             )
         };
 
+        // 	_NET_WM_STATE_FULLSCREEN and 	_NET_WM_STATE_ABOVE for finding focused window
+
         Ok(ImplWindow {
             window: *window,
             id: window.resource_id(),
