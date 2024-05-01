@@ -4,7 +4,6 @@ use std::ptr::null_mut;
 use windows::Win32::{
     Foundation::{HWND, BOOL},
     Graphics::{
-        Dwm::DwmIsCompositionEnabled,
         Gdi::{
             BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, GetCurrentObject, GetDIBits,
             GetObjectW, SelectObject, BITMAP, BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS,
@@ -14,7 +13,6 @@ use windows::Win32::{
             GdiplusStartup, GdiplusShutdown, GdiplusStartupInput
         }
     },
-    Storage::Xps::{PrintWindow, PRINT_WINDOW_FLAGS},
     UI::WindowsAndMessaging::{GetDesktopWindow, GetSystemMetrics, SetProcessDPIAware, SM_CXSCREEN, SM_CYSCREEN},
 };
 
@@ -154,6 +152,8 @@ pub fn capture_window(hwnd: HWND, scale_factor: f32) -> XCapResult<RgbaImage> {
 
 
         SetProcessDPIAware();
+        // let dw_hwnd = GetDesktopWindow();
+        // let box_hdc_desktop_window: BoxHDC = BoxHDC::from(dw_hwnd);
         let box_hdc_window: BoxHDC = BoxHDC::from(hwnd);
         let rect = get_window_rect(hwnd)?;
         let mut width = rect.right - rect.left;
@@ -193,19 +193,6 @@ pub fn capture_window(hwnd: HWND, scale_factor: f32) -> XCapResult<RgbaImage> {
         let previous_object = SelectObject(*box_hdc_mem, *box_h_bitmap);
 
         let mut is_success = false;
-
-        // https://webrtc.googlesource.com/src.git/+/refs/heads/main/modules/desktop_capture/win/window_capturer_win_gdi.cc#301
-        if get_os_major_version() >= 8 {
-            is_success = PrintWindow(hwnd, *box_hdc_mem, PRINT_WINDOW_FLAGS(2)).as_bool();
-        }
-
-        if !is_success && DwmIsCompositionEnabled()?.as_bool() {
-            is_success = PrintWindow(hwnd, *box_hdc_mem, PRINT_WINDOW_FLAGS(0)).as_bool();
-        }
-
-        if !is_success {
-            is_success = PrintWindow(hwnd, *box_hdc_mem, PRINT_WINDOW_FLAGS(3)).as_bool();
-        }
 
         if !is_success {
             is_success = BitBlt(
