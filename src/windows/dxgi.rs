@@ -17,10 +17,12 @@ use windows::{
                 DXGI_COLOR_SPACE_YCBCR_FULL_GHLG_TOPLEFT_P2020,
                 DXGI_COLOR_SPACE_YCBCR_STUDIO_G2084_LEFT_P2020,
                 DXGI_COLOR_SPACE_YCBCR_STUDIO_G2084_TOPLEFT_P2020,
-                DXGI_COLOR_SPACE_YCBCR_STUDIO_GHLG_TOPLEFT_P2020, DXGI_FORMAT_R16G16B16A16_FLOAT,
+                DXGI_COLOR_SPACE_YCBCR_STUDIO_GHLG_TOPLEFT_P2020,
+                DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_FORMAT_R16G16B16A16_FLOAT,
             },
             Dxgi::{
-                CreateDXGIFactory1, DXGI_ERROR_NOT_FOUND, DXGI_ERROR_WAIT_TIMEOUT,
+                CreateDXGIFactory1, DXGI_ERROR_NOT_FOUND, DXGI_ERROR_UNSUPPORTED,
+                DXGI_ERROR_WAIT_TIMEOUT,
                 DXGI_OUTDUPL_FRAME_INFO, IDXGIAdapter1, IDXGIDevice, IDXGIFactory1, IDXGIOutput1,
                 IDXGIOutput5, IDXGIOutput6, IDXGIOutputDuplication, IDXGIResource,
             },
@@ -438,9 +440,14 @@ pub(super) fn is_hdr_monitor(h_monitor: HMONITOR) -> bool {
                     return false;
                 };
 
-                let formats = [DXGI_FORMAT_R16G16B16A16_FLOAT];
-                let probe = output5.DuplicateOutput1(&dxgi_device, 0, &formats);
-                return probe.is_ok();
+                let formats = [DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R10G10B10A2_UNORM];
+                return match output5.DuplicateOutput1(&dxgi_device, 0, &formats) {
+                    Ok(_) => true,
+                    // Driver explicitly rejects float-format duplication (e.g. 8-bit FRC panel).
+                    Err(e) if e.code() == DXGI_ERROR_UNSUPPORTED => false,
+                    // Transient error (session in use, access denied, etc.) — trust color space.
+                    Err(_) => color_space_is_hdr,
+                };
             }
         }
         false

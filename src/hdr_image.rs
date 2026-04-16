@@ -1,4 +1,4 @@
-use image::{Rgba32FImage, RgbaImage};
+use image::{Rgba32FImage, RgbaImage, Rgb32FImage};
 
 /// An HDR screen capture in scRGB linear color space.
 ///
@@ -84,7 +84,7 @@ impl HdrImage {
     /// Convert to a linear f32 `Rgba32FImage`, preserving full HDR range.
     ///
     /// Values above 1.0 are HDR highlights in scRGB linear space. Use this to
-    /// save as tiff or for downstream HDR processing.
+    /// save as jpg xr or for downstream HDR processing.
     pub fn to_rgba32f_image(&self) -> Rgba32FImage {
         let mut pixels = vec![0.0f32; (self.width * self.height * 4) as usize];
         for y in 0..self.height {
@@ -98,6 +98,20 @@ impl HdrImage {
             }
         }
         Rgba32FImage::from_raw(self.width, self.height, pixels).expect("dimensions match")
+    }
+
+    pub fn to_rgb32f_image(&self) -> Rgb32FImage {
+        let mut pixels = vec![0.0f32; (self.width * self.height * 3) as usize];
+        for y in 0..self.height {
+            for x in 0..self.width {
+                let [r, g, b, _a] = self.pixel_f32(x, y);
+                let base = ((y * self.width + x) * 3) as usize;
+                pixels[base] = r;
+                pixels[base + 1] = g;
+                pixels[base + 2] = b;
+            }
+        }
+        Rgb32FImage::from_raw(self.width, self.height, pixels).expect("dimensions match")
     }
 }
 

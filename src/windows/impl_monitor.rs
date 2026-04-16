@@ -420,8 +420,18 @@ impl ImplMonitor {
                         Ok(output5) => FORMATS
                             .iter()
                             .map(|(name, fmt)| {
-                                let supported =
-                                    output5.DuplicateOutput1(&dxgi_device, 0, &[*fmt]).is_ok();
+                                let supported = match output5
+                                    .DuplicateOutput1(&dxgi_device, 0, &[*fmt])
+                                {
+                                    Ok(_) => true,
+                                    Err(e)
+                                        if e.code()
+                                            == windows::Win32::Graphics::Dxgi::DXGI_ERROR_UNSUPPORTED =>
+                                    {
+                                        false
+                                    }
+                                    Err(_) => true,
+                                };
                                 (*name, supported)
                             })
                             .collect(),
