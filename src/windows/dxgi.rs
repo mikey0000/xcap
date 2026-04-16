@@ -5,15 +5,10 @@ use windows::{
         Graphics::{
             Direct3D::D3D_DRIVER_TYPE_UNKNOWN,
             Direct3D11::{
-                D3D11_BOX, D3D11_CPU_ACCESS_READ, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
-                D3D11_MAP_READ, D3D11_MAPPED_SUBRESOURCE, D3D11_SDK_VERSION, D3D11_TEXTURE2D_DESC,
+                D3D11_BOX, D3D11_CPU_ACCESS_READ, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_MAP_READ,
+                D3D11_MAPPED_SUBRESOURCE, D3D11_SDK_VERSION, D3D11_TEXTURE2D_DESC,
                 D3D11_USAGE_STAGING, D3D11CreateDevice, ID3D11Device, ID3D11DeviceContext,
                 ID3D11Texture2D,
-            },
-            Dxgi::{
-                CreateDXGIFactory1, DXGI_ERROR_NOT_FOUND, DXGI_ERROR_WAIT_TIMEOUT,
-                DXGI_OUTDUPL_FRAME_INFO, IDXGIAdapter1, IDXGIDevice, IDXGIFactory1, IDXGIOutput1,
-                IDXGIOutput5, IDXGIOutput6, IDXGIOutputDuplication, IDXGIResource,
             },
             Dxgi::Common::{
                 DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709,
@@ -22,8 +17,12 @@ use windows::{
                 DXGI_COLOR_SPACE_YCBCR_FULL_GHLG_TOPLEFT_P2020,
                 DXGI_COLOR_SPACE_YCBCR_STUDIO_G2084_LEFT_P2020,
                 DXGI_COLOR_SPACE_YCBCR_STUDIO_G2084_TOPLEFT_P2020,
-                DXGI_COLOR_SPACE_YCBCR_STUDIO_GHLG_TOPLEFT_P2020,
-                DXGI_FORMAT_R16G16B16A16_FLOAT,
+                DXGI_COLOR_SPACE_YCBCR_STUDIO_GHLG_TOPLEFT_P2020, DXGI_FORMAT_R16G16B16A16_FLOAT,
+            },
+            Dxgi::{
+                CreateDXGIFactory1, DXGI_ERROR_NOT_FOUND, DXGI_ERROR_WAIT_TIMEOUT,
+                DXGI_OUTDUPL_FRAME_INFO, IDXGIAdapter1, IDXGIDevice, IDXGIFactory1, IDXGIOutput1,
+                IDXGIOutput5, IDXGIOutput6, IDXGIOutputDuplication, IDXGIResource,
             },
             Gdi::HMONITOR,
         },
@@ -132,7 +131,8 @@ impl DxgiSession {
                                     Ok(dup) => (dup, true),
                                     Err(e) => {
                                         println!(
-                                            "DuplicateOutput1 rejected R16G16B16A16_FLOAT: {e} ({:#010x})", e.code().0
+                                            "DuplicateOutput1 rejected R16G16B16A16_FLOAT: {e} ({:#010x})",
+                                            e.code().0
                                         );
                                         let o1 = output.cast::<IDXGIOutput1>()?;
                                         (o1.DuplicateOutput(&dxgi_device)?, false)
@@ -299,8 +299,13 @@ impl DxgiSession {
                 let staging_res: windows::Win32::Graphics::Direct3D11::ID3D11Resource =
                     staging.cast()?;
                 let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
-                self.d3d_context
-                    .Map(Some(&staging_res), 0, D3D11_MAP_READ, 0, Some(&mut mapped))?;
+                self.d3d_context.Map(
+                    Some(&staging_res),
+                    0,
+                    D3D11_MAP_READ,
+                    0,
+                    Some(&mut mapped),
+                )?;
 
                 let src_ptr = mapped.pData as *const u8;
                 for row in 0..height as usize {
@@ -316,9 +321,7 @@ impl DxgiSession {
                 // A real black frame has alpha = 0xFF (BGRA8) or 0x3C00 (f16),
                 // so all-zero bytes reliably identify an uninitialized frame buffer.
                 if raw.iter().all(|&b| b == 0) {
-                    log::debug!(
-                        "DXGI: empty frame on attempt {attempt}/{MAX_ATTEMPTS}, retrying"
-                    );
+                    log::debug!("DXGI: empty frame on attempt {attempt}/{MAX_ATTEMPTS}, retrying");
                     staging_opt = Some(staging_res.cast()?);
                     continue;
                 }
@@ -468,5 +471,5 @@ fn is_hdr_color_space(cs: windows::Win32::Graphics::Dxgi::Common::DXGI_COLOR_SPA
         || cs == DXGI_COLOR_SPACE_YCBCR_STUDIO_G2084_LEFT_P2020   // YCbCr HDR10 (AMD HDMI)
         || cs == DXGI_COLOR_SPACE_YCBCR_STUDIO_G2084_TOPLEFT_P2020 // YCbCr HDR10 topleft
         || cs == DXGI_COLOR_SPACE_YCBCR_STUDIO_GHLG_TOPLEFT_P2020  // HLG studio (broadcast)
-        || cs == DXGI_COLOR_SPACE_YCBCR_FULL_GHLG_TOPLEFT_P2020    // HLG full range
+        || cs == DXGI_COLOR_SPACE_YCBCR_FULL_GHLG_TOPLEFT_P2020 // HLG full range
 }

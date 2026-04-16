@@ -9,9 +9,7 @@ use windows::Win32::{
         DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDIBits, GetWindowDC, HBITMAP, HDC, ReleaseDC,
         SRCCOPY, SelectObject,
     },
-    UI::WindowsAndMessaging::{
-        GetDesktopWindow, GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN,
-    },
+    UI::WindowsAndMessaging::{GetDesktopWindow, GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN},
 };
 
 use crate::{
@@ -140,14 +138,12 @@ pub(super) fn capture_window(hwnd: HWND) -> XCapResult<RgbaImage> {
             height = GetSystemMetrics(SM_CYSCREEN);
         }
 
-        let scope_guard_hdc_mem = guard(
-            CreateCompatibleDC(Some(*scope_guard_hdc_desktop)),
-            |val| {
+        let scope_guard_hdc_mem =
+            guard(CreateCompatibleDC(Some(*scope_guard_hdc_desktop)), |val| {
                 if !DeleteDC(val).as_bool() {
                     log::error!("DeleteDC({:?}) failed: {:?}", val, GetLastError());
                 }
-            },
-        );
+            });
         let scope_guard_h_bitmap = guard(
             CreateCompatibleBitmap(*scope_guard_hdc_desktop, width, height),
             delete_bitmap_object,

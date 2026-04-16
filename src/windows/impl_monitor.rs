@@ -4,21 +4,20 @@ use image::RgbaImage;
 use scopeguard::guard;
 use widestring::U16CString;
 use windows::{
+    Win32::Foundation::HMODULE,
     Win32::{
         Devices::Display::DISPLAYCONFIG_OUTPUT_TECHNOLOGY_INTERNAL,
         Foundation::{GetLastError, LPARAM, POINT, RECT, TRUE},
         Graphics::{
             Direct3D::D3D_DRIVER_TYPE_UNKNOWN,
-            Direct3D11::{
-                D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION, D3D11CreateDevice,
+            Direct3D11::{D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION, D3D11CreateDevice},
+            Dxgi::Common::{
+                DXGI_FORMAT, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM,
+                DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_FORMAT_R16G16B16A16_FLOAT,
             },
             Dxgi::{
-                CreateDXGIFactory1, IDXGIAdapter1, IDXGIDevice, IDXGIFactory1, IDXGIOutput5,
-                IDXGIOutput6, DXGI_ERROR_NOT_FOUND,
-            },
-            Dxgi::Common::{
-                DXGI_FORMAT, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R10G10B10A2_UNORM,
-                DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R8G8B8A8_UNORM,
+                CreateDXGIFactory1, DXGI_ERROR_NOT_FOUND, IDXGIAdapter1, IDXGIDevice,
+                IDXGIFactory1, IDXGIOutput5, IDXGIOutput6,
             },
             Gdi::{
                 CreateDCW, DESKTOPHORZRES, DEVMODEW, DMDO_90, DMDO_180, DMDO_270, DMDO_DEFAULT,
@@ -31,7 +30,6 @@ use windows::{
         UI::WindowsAndMessaging::MONITORINFOF_PRIMARY,
     },
     core::{BOOL, HRESULT, Interface, PCWSTR, s, w},
-    Win32::Foundation::HMODULE,
 };
 
 /// Information about DXGI Desktop Duplication format support for a monitor.
@@ -378,17 +376,25 @@ impl ImplMonitor {
                             .ok()
                             .and_then(|o6| o6.GetDesc1().ok())
                             .map(|d| {
-                                let cs = match d.ColorSpace.0 {
-                                    0  => "RGB_FULL_G22_NONE_P709 (sRGB)".to_string(),
-                                    1  => "RGB_FULL_G10_NONE_P709 (scRGB linear / Windows HDR)".to_string(),
-                                    4  => "RGB_FULL_G2084_NONE_P2020 (HDR10 PQ RGB full)".to_string(),
-                                    5  => "RGB_STUDIO_G2084_NONE_P2020 (HDR10 PQ RGB studio)".to_string(),
-                                    8  => "YCBCR_STUDIO_G2084_LEFT_P2020 (HDR10 YCbCr AMD HDMI)".to_string(),
-                                    11 => "YCBCR_STUDIO_G2084_TOPLEFT_P2020 (HDR10 YCbCr)".to_string(),
-                                    12 => "YCBCR_FULL_GHLG_TOPLEFT_P2020 (HLG YCbCr full)".to_string(),
-                                    13 => "YCBCR_STUDIO_GHLG_TOPLEFT_P2020 (HLG YCbCr studio)".to_string(),
-                                    v  => format!("unknown ({v})"),
-                                };
+                                let cs =
+                                    match d.ColorSpace.0 {
+                                        0 => "RGB_FULL_G22_NONE_P709 (sRGB)".to_string(),
+                                        1 => "RGB_FULL_G10_NONE_P709 (scRGB linear / Windows HDR)"
+                                            .to_string(),
+                                        4 => "RGB_FULL_G2084_NONE_P2020 (HDR10 PQ RGB full)"
+                                            .to_string(),
+                                        5 => "RGB_STUDIO_G2084_NONE_P2020 (HDR10 PQ RGB studio)"
+                                            .to_string(),
+                                        8 => "YCBCR_STUDIO_G2084_LEFT_P2020 (HDR10 YCbCr AMD HDMI)"
+                                            .to_string(),
+                                        11 => "YCBCR_STUDIO_G2084_TOPLEFT_P2020 (HDR10 YCbCr)"
+                                            .to_string(),
+                                        12 => "YCBCR_FULL_GHLG_TOPLEFT_P2020 (HLG YCbCr full)"
+                                            .to_string(),
+                                        13 => "YCBCR_STUDIO_GHLG_TOPLEFT_P2020 (HLG YCbCr studio)"
+                                            .to_string(),
+                                        v => format!("unknown ({v})"),
+                                    };
                                 (d.BitsPerColor, d.MaxLuminance, d.MinLuminance, cs)
                             })
                             .unwrap_or((0, 0.0, 0.0, "IDXGIOutput6 unavailable".to_string()));
