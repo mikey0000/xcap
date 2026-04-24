@@ -1,9 +1,9 @@
-use core_graphics::{
-    display::{kCGWindowImageDefault, CGWindowID, CGWindowListOption},
-    geometry::CGRect,
-    window::create_image,
-};
 use image::RgbaImage;
+use objc2_core_foundation::CGRect;
+use objc2_core_graphics::{
+    CGDataProvider, CGImage, CGWindowID, CGWindowImageOption, CGWindowListCreateImage,
+    CGWindowListOption,
+};
 
 use crate::error::{XCapError, XCapResult};
 
@@ -12,19 +12,29 @@ pub fn capture(
     list_option: CGWindowListOption,
     window_id: CGWindowID,
 ) -> XCapResult<RgbaImage> {
-    let cg_image = create_image(cg_rect, list_option, window_id, kCGWindowImageDefault)
-        .ok_or_else(|| XCapError::new(format!("Capture failed {} {:?}", window_id, cg_rect)))?;
+    let cg_image = CGWindowListCreateImage(
+        cg_rect,
+        list_option,
+        window_id,
+        CGWindowImageOption::Default,
+    );
 
-    let width = cg_image.width();
-    let height = cg_image.height();
-    let bytes = Vec::from(cg_image.data().bytes());
+    let width = CGImage::width(cg_image.as_deref());
+    let height = CGImage::height(cg_image.as_deref());
+    let data_provider = CGImage::data_provider(cg_image.as_deref());
+
+    let data = CGDataProvider::data(data_provider.as_deref())
+        .ok_or_else(|| XCapError::new("Failed to copy data"))?
+        .to_vec();
+
+    let bytes_per_row = CGImage::bytes_per_row(cg_image.as_deref());
 
     // Some platforms e.g. MacOS can have extra bytes at the end of each row.
     // See
     // https://github.com/nashaofu/xcap/issues/29
     // https://github.com/nashaofu/xcap/issues/38
     let mut buffer = Vec::with_capacity(width * height * 4);
-    for row in bytes.chunks_exact(cg_image.bytes_per_row()) {
+    for row in data.chunks_exact(bytes_per_row) {
         buffer.extend_from_slice(&row[..width * 4]);
     }
 

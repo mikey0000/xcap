@@ -1,170 +1,167 @@
-use image::RgbaImage;
-use std::mem;
-use windows::Win32::{
-    Foundation::HWND,
-    Graphics::Gdi::{
-        BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, GetDIBits, SelectObject, BITMAPINFO,
-        BITMAPINFOHEADER, DIB_RGB_COLORS, SRCCOPY,
-    },
-    UI::WindowsAndMessaging::{
-        GetDesktopWindow, GetSystemMetrics, SetProcessDPIAware, SM_CXSCREEN, SM_CYSCREEN,
-    },
-};
-
 use crate::{
-    error::{XCapError, XCapResult},
-    platform::utils::get_window_rect,
+    HdrImage, XCapError, XCapResult,
+    platform::{impl_monitor::ImplMonitor, impl_window::ImplWindow},
 };
 
-use super::{
-    boxed::{BoxHBITMAP, BoxHDC},
-    utils::get_os_major_version,
-};
+use image::RgbaImage;
 
-fn to_rgba_image(
-    box_hdc_mem: BoxHDC,
-    box_h_bitmap: BoxHBITMAP,
-    width: i32,
-    height: i32,
+fn check_capture_region(
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+    monitor_width: u32,
+    monitor_height: u32,
+) -> XCapResult<()> {
+    // Validate region bounds
+    if width > monitor_width
+        || height > monitor_height
+        || x + width > monitor_width
+        || y + height > monitor_height
+    {
+        return Err(XCapError::InvalidCaptureRegion(format!(
+            "Region ({x}, {y}, {width}, {height}) is outside monitor size ({monitor_width}, {monitor_height})"
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(feature = "wgc")]
+pub(super) fn capture_monitor(
+    monitor: &ImplMonitor,
+    x: Option<u32>,
+    y: Option<u32>,
+    width: Option<u32>,
+    height: Option<u32>,
 ) -> XCapResult<RgbaImage> {
-    let buffer_size = width * height * 4;
-    let mut bitmap_info = BITMAPINFO {
-        bmiHeader: BITMAPINFOHEADER {
-            biSize: mem::size_of::<BITMAPINFOHEADER>() as u32,
-            biWidth: width,
-            biHeight: -height,
-            biPlanes: 1,
-            biBitCount: 32,
-            biSizeImage: buffer_size as u32,
-            biCompression: 0,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-
-    let mut buffer = vec![0u8; buffer_size as usize];
-
-    unsafe {
-        // 读取数据到 buffer 中
-        let is_success = GetDIBits(
-            *box_hdc_mem,
-            *box_h_bitmap,
-            0,
-            height as u32,
-            Some(buffer.as_mut_ptr().cast()),
-            &mut bitmap_info,
-            DIB_RGB_COLORS,
-        ) == 0;
-
-        if is_success {
-            return Err(XCapError::new("Get RGBA data failed"));
-        }
-    };
-
-    for src in buffer.chunks_exact_mut(4) {
-        src.swap(0, 2);
-        // fix https://github.com/nashaofu/xcap/issues/92#issuecomment-1910014951
-        if src[3] == 0 && get_os_major_version() < 8 {
-            src[3] = 255;
-        }
-    }
-
-    RgbaImage::from_raw(width as u32, height as u32, buffer)
-        .ok_or_else(|| XCapError::new("RgbaImage::from_raw failed"))
-}
-
-#[allow(unused)]
-pub fn capture_monitor(x: i32, y: i32, width: i32, height: i32) -> XCapResult<RgbaImage> {
-    unsafe {
-        SetProcessDPIAware();
-        let hwnd = GetDesktopWindow();
-        let box_hdc_desktop_window = BoxHDC::from(hwnd);
-
-        // 内存中的HDC，使用 DeleteDC 函数释放
-        // https://learn.microsoft.com/zh-cn/windows/win32/api/wingdi/nf-wingdi-createcompatibledc
-        let box_hdc_mem = BoxHDC::new(CreateCompatibleDC(*box_hdc_desktop_window), None);
-        let box_h_bitmap = BoxHBITMAP::new(CreateCompatibleBitmap(
-            *box_hdc_desktop_window,
-            width,
-            height,
-        ));
-
-        // 使用SelectObject函数将这个位图选择到DC中
-        SelectObject(*box_hdc_mem, *box_h_bitmap);
-
-        // 拷贝原始图像到内存
-        // 这里不需要缩放图片，所以直接使用BitBlt
-        // 如需要缩放，则使用 StretchBlt
-        BitBlt(
-            *box_hdc_mem,
-            0,
-            0,
-            width,
-            height,
-            *box_hdc_desktop_window,
-            x,
-            y,
-            SRCCOPY,
-        )?;
-
-        to_rgba_image(box_hdc_mem, box_h_bitmap, width, height)
+    use super::wgc;
+    if let (Some(x), Some(y), Some(width), Some(height)) = (x, y, width, height) {
+        let monitor_width = monitor.width()?;
+        let monitor_height = monitor.height()?;
+        check_capture_region(x, y, width, height, monitor_width, monitor_height)?;
+        wgc::capture_monitor(monitor.h_monitor, x, y, width, height)
+    } else {
+        wgc::capture_monitor(monitor.h_monitor, 0, 0, monitor.width()?, monitor.height()?)
     }
 }
 
-#[allow(unused)]
-pub fn capture_window(hwnd: HWND, scale_factor: f32) -> XCapResult<RgbaImage> {
-    unsafe {
-        SetProcessDPIAware();
-        let dw_hwnd = GetDesktopWindow();
-        let box_hdc_desktop_window: BoxHDC = BoxHDC::from(dw_hwnd);
-        let box_hdc_window: BoxHDC = BoxHDC::from(hwnd);
-        let rect = get_window_rect(hwnd)?;
-        let mut width = rect.right - rect.left;
-        let mut height = rect.bottom - rect.top;
+#[cfg(not(feature = "wgc"))]
+pub(super) fn capture_monitor(
+    monitor: &ImplMonitor,
+    x: Option<u32>,
+    y: Option<u32>,
+    width: Option<u32>,
+    height: Option<u32>,
+) -> XCapResult<RgbaImage> {
+    use super::dxgi::{self, CaptureFrame};
+    use super::gdi;
 
-        if width == 0 {
-            width = GetSystemMetrics(SM_CXSCREEN);
+    let monitor_width = monitor.width()?;
+    let monitor_height = monitor.height()?;
+
+    let (cap_x, cap_y, cap_w, cap_h) =
+        if let (Some(x), Some(y), Some(width), Some(height)) = (x, y, width, height) {
+            check_capture_region(x, y, width, height, monitor_width, monitor_height)?;
+            (x, y, width, height)
+        } else {
+            (0, 0, monitor_width, monitor_height)
+        };
+
+    // Try DXGI Desktop Duplication first (supports HDR). Fall back to GDI on
+    // E_ACCESSDENIED (secure desktop / UAC) or other driver-level failures.
+    match dxgi::capture_monitor(monitor.h_monitor, cap_x, cap_y, cap_w, cap_h) {
+        Ok(CaptureFrame::Sdr(img)) => Ok(img),
+        Ok(CaptureFrame::Hdr(hdr)) => {
+            // Tone-map HDR → SDR so existing callers get a usable image.
+            let peak_nits = monitor.dxgi_format_support()
+                .map(|i| i.max_luminance_nits)
+                .unwrap_or(400.0);
+            Ok(image::DynamicImage::from(hdr.to_rgb_image_tonemapped(peak_nits)).to_rgba8())
         }
-        if height == 0 {
-            height = GetSystemMetrics(SM_CYSCREEN);
+        Err(err) => {
+            log::debug!("DXGI capture failed ({err}), falling back to GDI");
+            let monitor_x = monitor.x()?;
+            let monitor_y = monitor.y()?;
+            let abs_x = monitor_x + cap_x as i32;
+            let abs_y = monitor_y + cap_y as i32;
+            gdi::capture_monitor(abs_x, abs_y, cap_w as i32, cap_h as i32)
         }
-
-        let mut horizontal_scale = 1.0;
-        let mut vertical_scale = 1.0;
-
-        width = (width as f32 * scale_factor) as i32;
-        height = (height as f32 * scale_factor) as i32;
-
-        // 内存中的HDC，使用 DeleteDC 函数释放
-        // https://learn.microsoft.com/zh-cn/windows/win32/api/wingdi/nf-wingdi-createcompatibledc
-        let box_hdc_mem = BoxHDC::new(CreateCompatibleDC(*box_hdc_desktop_window), None);
-        let box_h_bitmap = BoxHBITMAP::new(CreateCompatibleBitmap(
-            *box_hdc_desktop_window,
-            width,
-            height,
-        ));
-
-        let previous_object = SelectObject(*box_hdc_mem, *box_h_bitmap);
-
-        let mut is_success = false;
-
-        if !is_success {
-            is_success = BitBlt(
-                *box_hdc_mem,
-                0,
-                0,
-                width,
-                height,
-                *box_hdc_desktop_window,
-                rect.left,
-                rect.top,
-                SRCCOPY,
-            )
-            .is_ok();
-        }
-
-        SelectObject(*box_hdc_mem, previous_object);
-
-        to_rgba_image(box_hdc_mem, box_h_bitmap, width, height)
     }
+}
+
+/// Capture the full monitor and return raw HDR pixel data when the monitor is in
+/// HDR mode, or an `HdrImage` built from SDR data otherwise.
+///
+/// Only available without the `wgc` feature (requires DXGI Desktop Duplication).
+#[cfg(not(feature = "wgc"))]
+pub(super) fn capture_monitor_hdr(monitor: &ImplMonitor) -> XCapResult<HdrImage> {
+    use super::dxgi::{self, CaptureFrame};
+
+    let width = monitor.width()?;
+    let height = monitor.height()?;
+
+    println!("capture_monitor_hdr: requesting {width}x{height} from DXGI");
+    match dxgi::capture_monitor(monitor.h_monitor, 0, 0, width, height)? {
+        CaptureFrame::Hdr(hdr) => {
+            println!("capture_monitor_hdr: got Hdr {}x{}", hdr.width, hdr.height);
+            Ok(hdr)
+        }
+        CaptureFrame::Sdr(img) => {
+            println!("capture_monitor_hdr: got Sdr {}x{} — HDR capture unavailable", img.width(), img.height());
+            Err(XCapError::new(
+                "DXGI opened in BGRA8 mode despite HDR display; driver does not support R16G16B16A16_FLOAT duplication",
+            ))
+        }
+    }
+}
+
+/// Whether the monitor is currently in HDR mode (DXGI Desktop Duplication path).
+#[cfg(not(feature = "wgc"))]
+pub(super) fn monitor_is_hdr(monitor: &ImplMonitor) -> bool {
+    super::dxgi::is_hdr_monitor(monitor.h_monitor)
+}
+
+/// HDR capture is not supported on the WGC path (WGC only captures in BGRA8).
+#[cfg(feature = "wgc")]
+pub(super) fn capture_monitor_hdr(_monitor: &ImplMonitor) -> XCapResult<HdrImage> {
+    Err(XCapError::NotSupported)
+}
+
+/// HDR detection is not available on the WGC path.
+#[cfg(feature = "wgc")]
+pub(super) fn monitor_is_hdr(_monitor: &ImplMonitor) -> bool {
+    false
+}
+
+#[cfg(feature = "wgc")]
+pub(super) fn capture_window(window: &ImplWindow) -> XCapResult<RgbaImage> {
+    use windows::Win32::System::Threading::{GetCurrentProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+
+    use super::{
+        utils::{get_process_is_dpi_awareness, open_process},
+        wgc,
+    };
+
+    // 在win10之后，不同窗口有不同的dpi，所以可能存在截图不全或者截图有较大空白，实际窗口没有填充满图片
+    // 如果窗口不感知dpi，那么就不需要缩放，如果当前进程感知dpi，那么也不需要缩放
+    let scope_guard_handle = open_process(PROCESS_QUERY_LIMITED_INFORMATION, false, window.pid()?)?;
+    let window_is_dpi_awareness = get_process_is_dpi_awareness(*scope_guard_handle)?;
+    let current_process_is_dpi_awareness =
+        unsafe { get_process_is_dpi_awareness(GetCurrentProcess())? };
+
+    let scale_factor = if !window_is_dpi_awareness || current_process_is_dpi_awareness {
+        1.0
+    } else {
+        window.current_monitor()?.scale_factor()?
+    };
+    let width = (window.width()? as f32 * scale_factor).ceil() as u32;
+    let height = (window.height()? as f32 * scale_factor).ceil() as u32;
+    wgc::capture_window(window.hwnd, 0, 0, width, height)
+}
+
+#[cfg(not(feature = "wgc"))]
+pub(super) fn capture_window(window: &ImplWindow) -> XCapResult<RgbaImage> {
+    use super::gdi;
+
+    gdi::capture_window(window.hwnd)
 }

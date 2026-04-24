@@ -1,9 +1,17 @@
+use std::sync::PoisonError;
+
 use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum XCapError {
+    #[error("Not supported")]
+    NotSupported,
     #[error("{0}")]
     Error(String),
+    #[error("StdSyncPoisonError {0}")]
+    StdSyncPoisonError(String),
+    #[error("Invalid capture region: {0}")]
+    InvalidCaptureRegion(String),
 
     #[cfg(target_os = "linux")]
     #[error(transparent)]
@@ -16,27 +24,45 @@ pub enum XCapError {
     ImageImageError(#[from] image::ImageError),
     #[cfg(target_os = "linux")]
     #[error(transparent)]
-    StdStrUtf8Error(#[from] std::str::Utf8Error),
+    StdStringFromUtf8Error(#[from] std::string::FromUtf8Error),
     #[cfg(target_os = "linux")]
     #[error(transparent)]
-    DbusError(#[from] dbus::Error),
+    ZbusError(#[from] zbus::Error),
     #[cfg(target_os = "linux")]
     #[error(transparent)]
     StdIOError(#[from] std::io::Error),
     #[cfg(target_os = "linux")]
     #[error(transparent)]
+    StdMPSCRecvError(#[from] std::sync::mpsc::RecvError),
+    #[cfg(target_os = "linux")]
+    #[error(transparent)]
     StdTimeSystemTimeError(#[from] std::time::SystemTimeError),
+    #[cfg(target_os = "linux")]
+    #[error(transparent)]
+    LibwayshotError(#[from] libwayshot_xcap::Error),
+    #[cfg(target_os = "linux")]
+    #[error(transparent)]
+    UrlParseError(#[from] url::ParseError),
+    #[cfg(target_os = "linux")]
+    #[error(transparent)]
+    ZbusZvariantError(#[from] zbus::zvariant::Error),
+    #[cfg(target_os = "linux")]
+    #[error(transparent)]
+    PipewireError(#[from] pipewire::Error),
 
     #[cfg(target_os = "macos")]
-    #[error("CoreGraphicsDisplayCGError {0}")]
-    CoreGraphicsDisplayCGError(core_graphics::display::CGError),
+    #[error("Objc2CoreGraphicsCGError {:?}", 0)]
+    Objc2CoreGraphicsCGError(objc2_core_graphics::CGError),
 
     #[cfg(target_os = "windows")]
     #[error(transparent)]
     WindowsCoreError(#[from] windows::core::Error),
     #[cfg(target_os = "windows")]
     #[error(transparent)]
-    StdStringFromUtf16Error(#[from] std::string::FromUtf16Error),
+    Utf16Error(#[from] widestring::error::Utf16Error),
+    #[cfg(target_os = "windows")]
+    #[error(transparent)]
+    StdSyncMpscRecvTimeoutError(#[from] std::sync::mpsc::RecvTimeoutError),
 }
 
 impl XCapError {
@@ -45,11 +71,10 @@ impl XCapError {
     }
 }
 
-#[cfg(target_os = "macos")]
-impl From<core_graphics::display::CGError> for XCapError {
-    fn from(value: core_graphics::display::CGError) -> Self {
-        XCapError::CoreGraphicsDisplayCGError(value)
+pub type XCapResult<T> = Result<T, XCapError>;
+
+impl<T> From<PoisonError<T>> for XCapError {
+    fn from(value: PoisonError<T>) -> Self {
+        XCapError::StdSyncPoisonError(value.to_string())
     }
 }
-
-pub type XCapResult<T> = Result<T, XCapError>;

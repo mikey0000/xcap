@@ -2,12 +2,8 @@ use fs_extra::dir;
 use std::time::Instant;
 use xcap::Monitor;
 
-fn normalized(filename: &str) -> String {
-    filename
-        .replace('|', "")
-        .replace('\\', "")
-        .replace(':', "")
-        .replace('/', "")
+fn normalized(filename: String) -> String {
+    filename.replace(['|', '\\', ':', '/', '"'], "")
 }
 
 fn main() {
@@ -22,7 +18,7 @@ fn main() {
         image
             .save(format!(
                 "target/monitors/monitor-{}.png",
-                normalized(monitor.name())
+                normalized(monitor.friendly_name().unwrap())
             ))
             .unwrap();
     }
