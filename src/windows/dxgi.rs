@@ -47,14 +47,24 @@ pub(super) enum CaptureFrame {
     Hdr(HdrImage),
 }
 
+/// Which pixel format the DXGI duplication session was opened with.
+#[derive(Clone, Copy, PartialEq)]
+enum HdrMode {
+    /// `R16G16B16A16_FLOAT` — scRGB linear, 8 bytes/pixel.
+    Float,
+    /// `R10G10B10A2_UNORM` — HDR10 PQ-encoded, 4 bytes/pixel.
+    Pq,
+    /// `B8G8R8A8_UNORM` — SDR, 4 bytes/pixel.
+    Sdr,
+}
+
 // ── Internal session ──────────────────────────────────────────────────────────
 
 struct DxgiSession {
     d3d_device: ID3D11Device,
     d3d_context: ID3D11DeviceContext,
     duplication: IDXGIOutputDuplication,
-    /// Whether the duplication was opened with `R16G16B16A16_FLOAT` (HDR).
-    is_hdr: bool,
+    hdr_mode: HdrMode,
 }
 
 impl DxgiSession {
@@ -122,33 +132,48 @@ impl DxgiSession {
                     let dxgi_device = d3d_device.cast::<IDXGIDevice>()?;
 
                     // ── Open desktop duplication ─────────────────────────
-                    // For HDR, try IDXGIOutput5::DuplicateOutput1 with R16G16B16A16_FLOAT.
+                    // For HDR, try IDXGIOutput5::DuplicateOutput1 formats in order:
+                    //   1. R16G16B16A16_FLOAT — scRGB linear (best quality)
+                    //   2. R10G10B10A2_UNORM  — HDR10 PQ (fallback for 8-bit/FRC panels)
                     // Fall back to IDXGIOutput1::DuplicateOutput (always BGRA8) if
-                    // IDXGIOutput5 is unavailable or the format is rejected.
-                    let (duplication, is_hdr) = if is_hdr_display {
+                    // IDXGIOutput5 is unavailable or both formats are rejected.
+                    println!("DxgiSession::new is_hdr_display={is_hdr_display}");
+                    let (duplication, hdr_mode) = if is_hdr_display {
                         match output.cast::<IDXGIOutput5>() {
                             Ok(output5) => {
-                                let formats = [DXGI_FORMAT_R16G16B16A16_FLOAT];
-                                match output5.DuplicateOutput1(&dxgi_device, 0, &formats) {
-                                    Ok(dup) => (dup, true),
+                                match output5.DuplicateOutput1(&dxgi_device, 0, &[DXGI_FORMAT_R16G16B16A16_FLOAT]) {
+                                    Ok(dup) => { println!("DxgiSession: opened Float"); (dup, HdrMode::Float) }
                                     Err(e) => {
                                         println!(
                                             "DuplicateOutput1 rejected R16G16B16A16_FLOAT: {e} ({:#010x})",
                                             e.code().0
                                         );
-                                        let o1 = output.cast::<IDXGIOutput1>()?;
-                                        (o1.DuplicateOutput(&dxgi_device)?, false)
+                                        match output5.DuplicateOutput1(&dxgi_device, 0, &[DXGI_FORMAT_R10G10B10A2_UNORM]) {
+                                            Ok(dup) => { println!("DxgiSession: opened Pq"); (dup, HdrMode::Pq) }
+                                            Err(e2) => {
+                                                println!(
+                                                    "DuplicateOutput1 rejected R10G10B10A2_UNORM: {e2} ({:#010x})",
+                                                    e2.code().0
+                                                );
+                                                let o1 = output.cast::<IDXGIOutput1>()?;
+                                                let dup = o1.DuplicateOutput(&dxgi_device)?;
+                                                println!("DxgiSession: opened Sdr fallback");
+                                                (dup, HdrMode::Sdr)
+                                            }
+                                        }
                                     }
                                 }
                             }
-                            Err(_) => {
+                            Err(e) => {
+                                println!("DxgiSession: IDXGIOutput5 cast failed: {e}");
                                 let o1 = output.cast::<IDXGIOutput1>()?;
-                                (o1.DuplicateOutput(&dxgi_device)?, false)
+                                (o1.DuplicateOutput(&dxgi_device)?, HdrMode::Sdr)
                             }
                         }
                     } else {
+                        println!("DxgiSession: SDR display, opening Sdr session");
                         let o1 = output.cast::<IDXGIOutput1>()?;
-                        (o1.DuplicateOutput(&dxgi_device)?, false)
+                        (o1.DuplicateOutput(&dxgi_device)?, HdrMode::Sdr)
                     };
 
                     // Warm up the duplication session: acquire and discard the first
@@ -169,7 +194,7 @@ impl DxgiSession {
                         d3d_device,
                         d3d_context,
                         duplication,
-                        is_hdr,
+                        hdr_mode,
                     });
                 }
             }
@@ -180,7 +205,7 @@ impl DxgiSession {
     /// staging texture.  `x`, `y`, `width`, `height` are monitor-relative.
     fn capture_frame(&self, x: u32, y: u32, width: u32, height: u32) -> XCapResult<CaptureFrame> {
         unsafe {
-            let bytes_per_pixel = if self.is_hdr { 8usize } else { 4usize };
+            let bytes_per_pixel = if self.hdr_mode == HdrMode::Float { 8usize } else { 4usize };
             let row_bytes = width as usize * bytes_per_pixel;
             let mut raw = vec![0u8; row_bytes * height as usize];
 
@@ -329,15 +354,41 @@ impl DxgiSession {
                 }
 
                 // ── 8. Produce output ─────────────────────────────────────
-                return if self.is_hdr {
-                    // R16G16B16A16_FLOAT is already in RGBA channel order.
-                    Ok(CaptureFrame::Hdr(HdrImage::new(width, height, raw)))
-                } else {
-                    // B8G8R8A8_UNORM: swap B↔R.
-                    Ok(CaptureFrame::Sdr(
-                        RgbaImage::from_raw(width, height, bgra_to_rgba(raw))
-                            .ok_or_else(|| XCapError::new("RgbaImage::from_raw failed"))?,
-                    ))
+                return match self.hdr_mode {
+                    HdrMode::Float => {
+                        // R16G16B16A16_FLOAT: strip alpha, keep R, G, B f16s (6 bytes/pixel).
+                        let rgb_raw: Vec<u8> = raw
+                            .chunks_exact(8)
+                            .flat_map(|p| [p[0], p[1], p[2], p[3], p[4], p[5]])
+                            .collect();
+                        Ok(CaptureFrame::Hdr(HdrImage::new(width, height, rgb_raw)))
+                    }
+                    HdrMode::Pq => {
+                        // R10G10B10A2_UNORM: 4 bytes/pixel, R=bits[0..9], G=bits[10..19], B=bits[20..29].
+                        // Apply PQ EOTF to convert HDR10 → linear light, then scale to scRGB
+                        // (1.0 = 80 nits; PQ peak = 10 000 nits → multiply by 10000/80 = 125).
+                        let rgb_raw: Vec<u8> = raw
+                            .chunks_exact(4)
+                            .flat_map(|p| {
+                                let v = u32::from_le_bytes([p[0], p[1], p[2], p[3]]);
+                                let r = pq_eotf((v & 0x3FF) as f32 / 1023.0) * 125.0;
+                                let g = pq_eotf(((v >> 10) & 0x3FF) as f32 / 1023.0) * 125.0;
+                                let b = pq_eotf(((v >> 20) & 0x3FF) as f32 / 1023.0) * 125.0;
+                                let rf = f32_to_f16_le(r);
+                                let gf = f32_to_f16_le(g);
+                                let bf = f32_to_f16_le(b);
+                                [rf[0], rf[1], gf[0], gf[1], bf[0], bf[1]]
+                            })
+                            .collect();
+                        Ok(CaptureFrame::Hdr(HdrImage::new(width, height, rgb_raw)))
+                    }
+                    HdrMode::Sdr => {
+                        // B8G8R8A8_UNORM: swap B↔R.
+                        Ok(CaptureFrame::Sdr(
+                            RgbaImage::from_raw(width, height, bgra_to_rgba(raw))
+                                .ok_or_else(|| XCapError::new("RgbaImage::from_raw failed"))?,
+                        ))
+                    }
                 };
             }
 
@@ -398,20 +449,28 @@ pub(super) fn is_hdr_monitor(h_monitor: HMONITOR) -> bool {
                 }
 
                 // First check: does the color space indicate HDR at all?
-                let color_space_is_hdr = output
+                let (color_space_is_hdr, color_space_is_ycbcr) = output
                     .cast::<IDXGIOutput6>()
                     .ok()
                     .and_then(|o6| o6.GetDesc1().ok())
-                    .map(|d| is_hdr_color_space(d.ColorSpace))
-                    .unwrap_or(false);
+                    .map(|d| (is_hdr_color_space(d.ColorSpace), is_ycbcr_hdr_color_space(d.ColorSpace)))
+                    .unwrap_or((false, false));
 
                 if !color_space_is_hdr {
                     return false;
                 }
 
-                // Second check: can we actually open DuplicateOutput1 with a float format?
-                // Some 8-bit panels with FRC report HDR color space but the driver
-                // rejects R16G16B16A16_FLOAT with DXGI_ERROR_UNSUPPORTED.
+                // YCbCr color spaces (AMD DP/HDMI HLG, HDR10 YCbCr) are unambiguously HDR —
+                // they cannot be a false-positive from an 8-bit FRC panel.  Some AMD drivers
+                // also return DXGI_ERROR_UNSUPPORTED for DuplicateOutput1 in YCbCr mode even
+                // though the display is genuinely HDR, so skip the probe for these.
+                if color_space_is_ycbcr {
+                    return true;
+                }
+
+                // Second check (RGB HDR only): can we actually open DuplicateOutput1 with a
+                // float format?  Some 8-bit panels with FRC report an RGB HDR color space but
+                // the driver rejects R16G16B16A16_FLOAT with DXGI_ERROR_UNSUPPORTED.
                 let Ok(output5) = output.cast::<IDXGIOutput5>() else {
                     return false;
                 };
@@ -446,7 +505,7 @@ pub(super) fn is_hdr_monitor(h_monitor: HMONITOR) -> bool {
                     // Driver explicitly rejects float-format duplication (e.g. 8-bit FRC panel).
                     Err(e) if e.code() == DXGI_ERROR_UNSUPPORTED => false,
                     // Transient error (session in use, access denied, etc.) — trust color space.
-                    Err(_) => color_space_is_hdr,
+                    Err(_) => true,
                 };
             }
         }
@@ -475,8 +534,49 @@ fn is_hdr_color_space(cs: windows::Win32::Graphics::Dxgi::Common::DXGI_COLOR_SPA
     cs == DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709           // scRGB linear (NVIDIA)
         || cs == DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020  // RGB HDR10 PQ full
         || cs == DXGI_COLOR_SPACE_RGB_STUDIO_G2084_NONE_P2020 // RGB HDR10 PQ studio
-        || cs == DXGI_COLOR_SPACE_YCBCR_STUDIO_G2084_LEFT_P2020   // YCbCr HDR10 (AMD HDMI)
+        || is_ycbcr_hdr_color_space(cs)
+}
+
+/// Returns `true` for YCbCr HDR color spaces (AMD over HDMI/DP, HLG).
+///
+/// These are unambiguously HDR and some AMD drivers reject `DuplicateOutput1`
+/// for these color spaces even on genuine HDR displays, so they bypass the
+/// float-format probe in `is_hdr_monitor`.
+fn is_ycbcr_hdr_color_space(cs: windows::Win32::Graphics::Dxgi::Common::DXGI_COLOR_SPACE_TYPE) -> bool {
+    cs == DXGI_COLOR_SPACE_YCBCR_STUDIO_G2084_LEFT_P2020   // YCbCr HDR10 (AMD HDMI)
         || cs == DXGI_COLOR_SPACE_YCBCR_STUDIO_G2084_TOPLEFT_P2020 // YCbCr HDR10 topleft
         || cs == DXGI_COLOR_SPACE_YCBCR_STUDIO_GHLG_TOPLEFT_P2020  // HLG studio (broadcast)
-        || cs == DXGI_COLOR_SPACE_YCBCR_FULL_GHLG_TOPLEFT_P2020 // HLG full range
+        || cs == DXGI_COLOR_SPACE_YCBCR_FULL_GHLG_TOPLEFT_P2020    // HLG full range (AMD DP)
+}
+
+/// ST 2084 (PQ) inverse EOTF: normalized signal [0, 1] → linear light [0, 1]
+/// relative to a 10 000 nit peak.
+///
+/// To convert to scRGB (1.0 = 80 nits), multiply the result by `10000.0 / 80.0`.
+fn pq_eotf(np: f32) -> f32 {
+    const M1: f32 = 2610.0 / 16384.0;
+    const M2: f32 = 2523.0 / 32.0;
+    const C1: f32 = 3424.0 / 4096.0;
+    const C2: f32 = 2413.0 / 128.0;
+    const C3: f32 = 2392.0 / 128.0;
+    let np_m2 = np.powf(1.0 / M2);
+    let num = (np_m2 - C1).max(0.0);
+    let den = C2 - C3 * np_m2;
+    (num / den).powf(1.0 / M1)
+}
+
+/// Convert an f32 to a little-endian IEEE 754 half-precision (f16) byte pair.
+fn f32_to_f16_le(v: f32) -> [u8; 2] {
+    let bits = v.to_bits();
+    let s = bits >> 31;
+    let e = ((bits >> 23) & 0xFF) as i32 - 127 + 15;
+    let m = bits & 0x007F_FFFF;
+    let half: u16 = if e >= 31 {
+        ((s << 15) | (0x1F << 10)) as u16 // clamp to infinity
+    } else if e <= 0 {
+        (s << 15) as u16 // zero (or too small for subnormal)
+    } else {
+        ((s << 15) | ((e as u32) << 10) | (m >> 13)) as u16
+    };
+    half.to_le_bytes()
 }
