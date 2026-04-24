@@ -113,10 +113,18 @@ impl Monitor {
         self.impl_monitor.capture_image_hdr()
     }
 
-    /// Returns `true` if the monitor is currently in Windows HDR mode.
+    /// Returns `true` if this monitor is currently detected as HDR by the Windows
+    /// capture path.
+    ///
+    /// On Windows (non-`wgc` builds), detection is based on both the DXGI output
+    /// color space reported by `IDXGIOutput6::GetDesc1()` and whether Desktop
+    /// Duplication `DuplicateOutput1` accepts HDR pixel formats, with special
+    /// handling for YCbCr HDR outputs.
     ///
-    /// Uses DXGI `IDXGIOutput6::GetDesc1()` to query the color space.
-    /// Always returns `false` on non-Windows platforms or when built with `wgc`.
+    /// As a result, `false` does not necessarily mean the panel is incapable of
+    /// HDR; it can also mean the current mode / driver path does not expose HDR in
+    /// a way that this capture backend can use. Always returns `false` on
+    /// non-Windows platforms or when built with `wgc`.
     pub fn is_hdr(&self) -> bool {
         self.impl_monitor.is_hdr()
     }

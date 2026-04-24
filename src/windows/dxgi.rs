@@ -21,8 +21,7 @@ use windows::{
                 DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_FORMAT_R16G16B16A16_FLOAT,
             },
             Dxgi::{
-                CreateDXGIFactory1, DXGI_ERROR_NOT_FOUND, DXGI_ERROR_UNSUPPORTED,
-                DXGI_ERROR_WAIT_TIMEOUT,
+                CreateDXGIFactory1, DXGI_ERROR_NOT_FOUND, DXGI_ERROR_WAIT_TIMEOUT,
                 DXGI_OUTDUPL_FRAME_INFO, IDXGIAdapter1, IDXGIDevice, IDXGIFactory1, IDXGIOutput1,
                 IDXGIOutput5, IDXGIOutput6, IDXGIOutputDuplication, IDXGIResource,
             },
@@ -42,7 +41,7 @@ use super::utils::bgra_to_rgba;
 pub(super) enum CaptureFrame {
     /// Standard Dynamic Range — BGRA8 converted to RGBA8.
     Sdr(RgbaImage),
-    /// High Dynamic Range — scRGB linear, stored as f16 RGBA (8 bytes/pixel).
+    /// High Dynamic Range — scRGB linear, stored as f16 RGB (6 bytes/pixel; alpha is dropped).
     Hdr(HdrImage),
 }
 

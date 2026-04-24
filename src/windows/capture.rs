@@ -100,14 +100,18 @@ pub(super) fn capture_monitor_hdr(monitor: &ImplMonitor) -> XCapResult<HdrImage>
     let width = monitor.width()?;
     let height = monitor.height()?;
 
-    println!("capture_monitor_hdr: requesting {width}x{height} from DXGI");
-    match dxgi::capture_monitor(monitor.h_monitor, 0, 0, width, height)? {
-        CaptureFrame::Hdr(hdr) => {
-            println!("capture_monitor_hdr: got Hdr {}x{}", hdr.width, hdr.height);
-            Ok(hdr)
-        }
-        CaptureFrame::Sdr(img) => {
-            println!("capture_monitor_hdr: got Sdr {}x{} — HDR capture unavailable", img.width(), img.height());
+    log::debug!("capture_monitor_hdr: requesting {width}x{height} from DXGI");
+    match dxgi::capture_monitor(monitor.h_monitor, 0, 0, width, height)? {
+        CaptureFrame::Hdr(hdr) => {
+            log::debug!("capture_monitor_hdr: got Hdr {}x{}", hdr.width, hdr.height);
+            Ok(hdr)
+        }
+        CaptureFrame::Sdr(img) => {
+            log::debug!(
+                "capture_monitor_hdr: got Sdr {}x{} — HDR capture unavailable",
+                img.width(),
+                img.height()
+            );
             Err(XCapError::new(
                 "DXGI opened in BGRA8 mode despite HDR display; driver does not support R16G16B16A16_FLOAT duplication",
             ))
