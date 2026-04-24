@@ -31,7 +31,6 @@ use windows::{
     },
     core::{HRESULT, Interface},
 };
-
 use crate::{
     HdrImage,
     error::{XCapError, XCapResult},
@@ -144,21 +143,16 @@ impl DxgiSession {
                                 match output5.DuplicateOutput1(&dxgi_device, 0, &[DXGI_FORMAT_R16G16B16A16_FLOAT]) {
                                     Ok(dup) => { println!("DxgiSession: opened Float"); (dup, HdrMode::Float) }
                                     Err(e) => {
-                                        println!(
-                                            "DuplicateOutput1 rejected R16G16B16A16_FLOAT: {e} ({:#010x})",
-                                            e.code().0
-                                        );
+                                        println!("DuplicateOutput1 rejected R16G16B16A16_FLOAT: {e} ({:#010x})", e.code().0);
                                         match output5.DuplicateOutput1(&dxgi_device, 0, &[DXGI_FORMAT_R10G10B10A2_UNORM]) {
                                             Ok(dup) => { println!("DxgiSession: opened Pq"); (dup, HdrMode::Pq) }
                                             Err(e2) => {
-                                                println!(
-                                                    "DuplicateOutput1 rejected R10G10B10A2_UNORM: {e2} ({:#010x})",
-                                                    e2.code().0
-                                                );
+                                                println!("DuplicateOutput1 rejected R10G10B10A2_UNORM: {e2} ({:#010x})", e2.code().0);
                                                 let o1 = output.cast::<IDXGIOutput1>()?;
-                                                let dup = o1.DuplicateOutput(&dxgi_device)?;
-                                                println!("DxgiSession: opened Sdr fallback");
-                                                (dup, HdrMode::Sdr)
+                                                match o1.DuplicateOutput(&dxgi_device) {
+                                                    Ok(dup) => { println!("DxgiSession: opened Sdr fallback"); (dup, HdrMode::Sdr) }
+                                                    Err(e3) => { println!("DuplicateOutput (Sdr fallback) failed: {e3} ({:#010x})", e3.code().0); return Err(e3.into()); }
+                                                }
                                             }
                                         }
                                     }
@@ -167,28 +161,20 @@ impl DxgiSession {
                             Err(e) => {
                                 println!("DxgiSession: IDXGIOutput5 cast failed: {e}");
                                 let o1 = output.cast::<IDXGIOutput1>()?;
-                                (o1.DuplicateOutput(&dxgi_device)?, HdrMode::Sdr)
+                                match o1.DuplicateOutput(&dxgi_device) {
+                                    Ok(dup) => { println!("DxgiSession: opened Sdr (no Output5)"); (dup, HdrMode::Sdr) }
+                                    Err(e2) => { println!("DuplicateOutput (no Output5 fallback) failed: {e2} ({:#010x})", e2.code().0); return Err(e2.into()); }
+                                }
                             }
                         }
                     } else {
                         println!("DxgiSession: SDR display, opening Sdr session");
                         let o1 = output.cast::<IDXGIOutput1>()?;
-                        (o1.DuplicateOutput(&dxgi_device)?, HdrMode::Sdr)
+                        match o1.DuplicateOutput(&dxgi_device) {
+                            Ok(dup) => { println!("DxgiSession: opened Sdr"); (dup, HdrMode::Sdr) }
+                            Err(e) => { println!("DuplicateOutput (Sdr) failed: {e} ({:#010x})", e.code().0); return Err(e.into()); }
+                        }
                     };
-
-                    // Warm up the duplication session: acquire and discard the first
-                    // frame.  On some drivers (notably AMD) the initial frame buffer
-                    // after DuplicateOutput is uninitialized (all zeros).  Discarding
-                    // it here ensures the first real capture_frame() call gets valid
-                    // pixel data.
-                    let mut warm_info = DXGI_OUTDUPL_FRAME_INFO::default();
-                    let mut warm_resource: Option<IDXGIResource> = None;
-                    if duplication
-                        .AcquireNextFrame(500, &mut warm_info, &mut warm_resource)
-                        .is_ok()
-                    {
-                        let _ = duplication.ReleaseFrame();
-                    }
 
                     return Ok(DxgiSession {
                         d3d_device,
@@ -230,16 +216,19 @@ impl DxgiSession {
                 let mut resource: Option<IDXGIResource> = None;
                 let mut acquired = false;
 
-                for _ in 0..5 {
+                for _ in 0..10 {
                     match self
                         .duplication
-                        .AcquireNextFrame(100, &mut frame_info, &mut resource)
+                        .AcquireNextFrame(0, &mut frame_info, &mut resource)
                     {
                         Ok(()) => {
                             acquired = true;
                             break;
                         }
-                        Err(e) if e.code() == DXGI_ERROR_WAIT_TIMEOUT => continue,
+                        Err(e) if e.code() == DXGI_ERROR_WAIT_TIMEOUT => {
+                            std::thread::sleep(std::time::Duration::from_millis(10));
+                            continue;
+                        }
                         Err(e) => return Err(e.into()),
                     }
                 }
@@ -499,14 +488,9 @@ pub(super) fn is_hdr_monitor(h_monitor: HMONITOR) -> bool {
                     return false;
                 };
 
-                let formats = [DXGI_FORMAT_R16G16B16A16_FLOAT, DXGI_FORMAT_R10G10B10A2_UNORM];
-                return match output5.DuplicateOutput1(&dxgi_device, 0, &formats) {
-                    Ok(_) => true,
-                    // Driver explicitly rejects float-format duplication (e.g. 8-bit FRC panel).
-                    Err(e) if e.code() == DXGI_ERROR_UNSUPPORTED => false,
-                    // Transient error (session in use, access denied, etc.) — trust color space.
-                    Err(_) => true,
-                };
+                let float_ok = output5.DuplicateOutput1(&dxgi_device, 0, &[DXGI_FORMAT_R16G16B16A16_FLOAT]).is_ok();
+                let pq_ok = output5.DuplicateOutput1(&dxgi_device, 0, &[DXGI_FORMAT_R10G10B10A2_UNORM]).is_ok();
+                return float_ok || pq_ok;
             }
         }
         false

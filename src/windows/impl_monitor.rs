@@ -12,12 +12,11 @@ use windows::{
             Direct3D::D3D_DRIVER_TYPE_UNKNOWN,
             Direct3D11::{D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION, D3D11CreateDevice},
             Dxgi::Common::{
-                DXGI_FORMAT, DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_R8G8B8A8_UNORM,
-                DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_FORMAT_R16G16B16A16_FLOAT,
+                DXGI_FORMAT, DXGI_FORMAT_R10G10B10A2_UNORM, DXGI_FORMAT_R16G16B16A16_FLOAT,
             },
             Dxgi::{
                 CreateDXGIFactory1, DXGI_ERROR_NOT_FOUND, IDXGIAdapter1, IDXGIDevice,
-                IDXGIFactory1, IDXGIOutput5, IDXGIOutput6,
+                IDXGIFactory1, IDXGIOutput1, IDXGIOutput5, IDXGIOutput6,
             },
             Gdi::{
                 CreateDCW, DESKTOPHORZRES, DEVMODEW, DMDO_90, DMDO_180, DMDO_270, DMDO_DEFAULT,
@@ -337,11 +336,9 @@ impl ImplMonitor {
     }
 
     pub fn dxgi_format_support(&self) -> Option<DxgiFormatSupport> {
-        const FORMATS: &[(&str, DXGI_FORMAT)] = &[
+        const HDR_FORMATS: &[(&str, DXGI_FORMAT)] = &[
             ("R16G16B16A16_FLOAT", DXGI_FORMAT_R16G16B16A16_FLOAT),
             ("R10G10B10A2_UNORM", DXGI_FORMAT_R10G10B10A2_UNORM),
-            ("B8G8R8A8_UNORM", DXGI_FORMAT_B8G8R8A8_UNORM),
-            ("R8G8B8A8_UNORM", DXGI_FORMAT_R8G8B8A8_UNORM),
         ];
 
         unsafe {
@@ -378,22 +375,26 @@ impl ImplMonitor {
                             .map(|d| {
                                 let cs =
                                     match d.ColorSpace.0 {
-                                        0 => "RGB_FULL_G22_NONE_P709 (sRGB)".to_string(),
-                                        1 => "RGB_FULL_G10_NONE_P709 (scRGB linear / Windows HDR)"
-                                            .to_string(),
-                                        4 => "RGB_FULL_G2084_NONE_P2020 (HDR10 PQ RGB full)"
-                                            .to_string(),
-                                        5 => "RGB_STUDIO_G2084_NONE_P2020 (HDR10 PQ RGB studio)"
-                                            .to_string(),
-                                        8 => "YCBCR_STUDIO_G2084_LEFT_P2020 (HDR10 YCbCr AMD HDMI)"
-                                            .to_string(),
-                                        11 => "YCBCR_STUDIO_G2084_TOPLEFT_P2020 (HDR10 YCbCr)"
-                                            .to_string(),
-                                        12 => "YCBCR_FULL_GHLG_TOPLEFT_P2020 (HLG YCbCr full)"
-                                            .to_string(),
-                                        13 => "YCBCR_STUDIO_GHLG_TOPLEFT_P2020 (HLG YCbCr studio)"
-                                            .to_string(),
-                                        v => format!("unknown ({v})"),
+                                        0  => "RGB_FULL_G22_NONE_P709 (sRGB)".to_string(),
+                                        1  => "RGB_FULL_G10_NONE_P709 (scRGB linear / Windows HDR)".to_string(),
+                                        2  => "RGB_STUDIO_G22_NONE_P709".to_string(),
+                                        3  => "RGB_STUDIO_G22_NONE_P2020".to_string(),
+                                        4  => "RESERVED".to_string(),
+                                        5  => "YCBCR_FULL_G22_NONE_P709_X601".to_string(),
+                                        6  => "YCBCR_STUDIO_G22_LEFT_P601".to_string(),
+                                        7  => "YCBCR_FULL_G22_LEFT_P601".to_string(),
+                                        8  => "YCBCR_STUDIO_G22_LEFT_P709".to_string(),
+                                        9  => "YCBCR_FULL_G22_LEFT_P709".to_string(),
+                                        10 => "YCBCR_STUDIO_G22_LEFT_P2020".to_string(),
+                                        11 => "YCBCR_FULL_G22_LEFT_P2020".to_string(),
+                                        12 => "RGB_FULL_G2084_NONE_P2020 (HDR10 PQ RGB full)".to_string(),
+                                        13 => "YCBCR_STUDIO_G2084_LEFT_P2020 (HDR10 YCbCr AMD HDMI)".to_string(),
+                                        14 => "RGB_STUDIO_G2084_NONE_P2020 (HDR10 PQ RGB studio)".to_string(),
+                                        15 => "YCBCR_STUDIO_GHLG_TOPLEFT_P2020 (HLG YCbCr studio)".to_string(),
+                                        16 => "YCBCR_FULL_GHLG_TOPLEFT_P2020 (HLG YCbCr full)".to_string(),
+                                        17 => "RGB_STUDIO_G22_TOPLEFT_P2020".to_string(),
+                                        18 => "YCBCR_STUDIO_G2084_TOPLEFT_P2020 (HDR10 YCbCr topleft)".to_string(),
+                                        v  => format!("DXGI_COLOR_SPACE_TYPE({})", v),
                                     };
                                 (d.BitsPerColor, d.MaxLuminance, d.MinLuminance, cs)
                             })
@@ -415,27 +416,26 @@ impl ImplMonitor {
                     let d3d_device = d3d_device_opt?;
                     let dxgi_device = d3d_device.cast::<IDXGIDevice>().ok()?;
 
-                    let duplication_formats = match output.cast::<IDXGIOutput5>() {
-                        Err(_) => FORMATS.iter().map(|(name, _)| (*name, false)).collect(),
-                        Ok(output5) => FORMATS
+                    // Probe HDR formats via DuplicateOutput1, SDR via DuplicateOutput.
+                    let sdr_ok = output
+                        .cast::<IDXGIOutput1>()
+                        .ok()
+                        .and_then(|o1: IDXGIOutput1| o1.DuplicateOutput(&dxgi_device).ok())
+                        .is_some();
+                    let hdr_format_results: Vec<(&str, bool)> = match output.cast::<IDXGIOutput5>() {
+                        Err(_) => HDR_FORMATS.iter().map(|(name, _)| (*name, false)).collect(),
+                        Ok(output5) => HDR_FORMATS
                             .iter()
                             .map(|(name, fmt)| {
-                                let supported = match output5
+                                let supported = output5
                                     .DuplicateOutput1(&dxgi_device, 0, &[*fmt])
-                                {
-                                    Ok(_) => true,
-                                    Err(e)
-                                        if e.code()
-                                            == windows::Win32::Graphics::Dxgi::DXGI_ERROR_UNSUPPORTED =>
-                                    {
-                                        false
-                                    }
-                                    Err(_) => true,
-                                };
+                                    .is_ok();
                                 (*name, supported)
                             })
                             .collect(),
                     };
+                    let mut duplication_formats = hdr_format_results;
+                    duplication_formats.push(("DuplicateOutput (SDR)", sdr_ok));
 
                     return Some(DxgiFormatSupport {
                         bits_per_color,
