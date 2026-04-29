@@ -101,12 +101,17 @@ pub(super) fn capture_monitor_hdr(monitor: &ImplMonitor) -> XCapResult<HdrImage>
     let height = monitor.height()?;
 
     log::debug!("capture_monitor_hdr: requesting {width}x{height} from DXGI");
-    match dxgi::capture_monitor(monitor.h_monitor, 0, 0, width, height)? {
-        CaptureFrame::Hdr(hdr) => {
+    match dxgi::capture_monitor(monitor.h_monitor, 0, 0, width, height)? {
+
+        CaptureFrame::Hdr(hdr) => {
+
             log::debug!("capture_monitor_hdr: got Hdr {}x{}", hdr.width, hdr.height);
-            Ok(hdr)
-        }
-        CaptureFrame::Sdr(img) => {
+            Ok(hdr)
+
+        }
+
+        CaptureFrame::Sdr(img) => {
+
             log::debug!(
                 "capture_monitor_hdr: got Sdr {}x{} — HDR capture unavailable",
                 img.width(),

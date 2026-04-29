@@ -115,7 +115,8 @@ impl Monitor {
 
     /// Returns `true` if this monitor is currently detected as HDR by the Windows
     /// capture path.
-    ///
+    ///
+
     /// On Windows (non-`wgc` builds), detection is based on both the DXGI output
     /// color space reported by `IDXGIOutput6::GetDesc1()` and whether Desktop
     /// Duplication `DuplicateOutput1` accepts HDR pixel formats, with special
