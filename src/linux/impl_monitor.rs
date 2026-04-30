@@ -171,6 +171,67 @@ fn get_output_edid(output: Output) -> XCapResult<Vec<u8>> {
     Ok(edid)
 }
 
+/// Parse the CTA-861 extension block(s) from an EDID blob looking for a
+/// HDR Static Metadata Data Block (extended tag 0x06).
+///
+/// Returns `(is_hdr, peak_nits)` where:
+/// - `is_hdr` = true if the display advertises PQ (ST.2084) or HLG EOTF support
+/// - `peak_nits` = desired content max luminance from the metadata, or 0.0 if absent
+fn parse_edid_hdr(edid: &[u8]) -> Option<(bool, f64)> {
+    let num_extensions = *edid.get(126)? as usize;
+    for ext in 0..num_extensions {
+        let base = 128 + ext * 128;
+        // CTA-861 extension tag
+        if edid.get(base).copied()? != 0x02 {
+            continue;
+        }
+        // Byte 2: byte offset of first DTD (== end of data block collection)
+        let dtd_offset = edid.get(base + 2).copied()? as usize;
+        if dtd_offset < 4 {
+            continue;
+        }
+        let db_end = dtd_offset.min(128);
+
+        let mut pos = 4usize;
+        while pos < db_end {
+            let header = *edid.get(base + pos)?;
+            let tag = header >> 5;
+            let length = (header & 0x1F) as usize;
+            if length == 0 {
+                break;
+            }
+            if pos + length >= db_end {
+                break;
+            }
+            // Extended tag data block (tag == 7): next byte is the extended tag code
+            if tag == 7 && length >= 2 {
+                let ext_tag = *edid.get(base + pos + 1)?;
+                if ext_tag == 0x06 {
+                    // HDR Static Metadata Data Block (CTA-861.3)
+                    // Byte 2: EOTF bitmask  bit2=PQ(ST.2084)  bit3=HLG
+                    let eotf = edid.get(base + pos + 2).copied().unwrap_or(0);
+                    let is_hdr = eotf & 0x0C != 0;
+                    // Byte 4 (optional): desired content max luminance
+                    // Encoding: 50 * 2^(val/32) nits
+                    let peak_nits = if length >= 4 {
+                        let val = edid.get(base + pos + 4).copied().unwrap_or(0);
+                        if val > 0 {
+                            50.0 * 2.0_f64.powf(val as f64 / 32.0)
+                        } else {
+                            0.0
+                        }
+                    } else {
+                        0.0
+                    };
+                    return Some((is_hdr, peak_nits));
+                }
+            }
+            pos += 1 + length;
+        }
+    }
+    None
+}
+
 fn is_builtin_edid(edid: &[u8]) -> bool {
     const DESCRIPTOR_OFFSET: usize = 0x36;
 
@@ -378,7 +439,16 @@ impl ImplMonitor {
     }
 
     pub fn is_hdr(&self) -> bool {
-        false
+        self.hdr_from_edid().map(|(hdr, _)| hdr).unwrap_or(false)
+    }
+
+    pub fn peak_nits(&self) -> f64 {
+        self.hdr_from_edid().map(|(_, nits)| nits).unwrap_or(0.0)
+    }
+
+    fn hdr_from_edid(&self) -> Option<(bool, f64)> {
+        let edid = get_output_edid(self.output).ok()?;
+        parse_edid_hdr(&edid)
     }
 
     pub fn video_recorder(&self) -> XCapResult<(ImplVideoRecorder, Receiver<Frame>)> {

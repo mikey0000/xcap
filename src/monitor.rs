@@ -113,6 +113,17 @@ impl Monitor {
         self.impl_monitor.capture_image_hdr()
     }
 
+    /// Peak display luminance in nits.
+    ///
+    /// - **Windows**: read from DXGI `IDXGIOutput6::GetDesc1` (`MaxLuminance`).
+    /// - **macOS**: `NSScreen.maximumPotentialEDRValue × 203` (PQ reference white).
+    /// - **Linux**: parsed from the EDID HDR Static Metadata Data Block (CTA-861.3).
+    ///
+    /// Returns `0.0` when the display is SDR or the value cannot be determined.
+    pub fn peak_nits(&self) -> f64 {
+        self.impl_monitor.peak_nits()
+    }
+
     /// Returns `true` if this monitor is currently detected as HDR by the Windows
     /// capture path.
     ///

@@ -331,6 +331,12 @@ impl ImplMonitor {
         monitor_is_hdr(self)
     }
 
+    pub fn peak_nits(&self) -> f64 {
+        self.dxgi_format_support()
+            .map(|f| f.max_luminance_nits as f64)
+            .unwrap_or(0.0)
+    }
+
     pub fn video_recorder(&self) -> XCapResult<(ImplVideoRecorder, Receiver<Frame>)> {
         ImplVideoRecorder::new(self.h_monitor)
     }

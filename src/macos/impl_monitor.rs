@@ -246,8 +246,39 @@ impl ImplMonitor {
         Err(XCapError::NotSupported)
     }
 
+    /// Returns `true` if the display supports HDR (EDR value > 1.0).
+    ///
+    /// Uses `NSScreen.maximumPotentialEDRValue`, available on macOS 12+.
     pub fn is_hdr(&self) -> bool {
-        false
+        self.edr_value() > 1.0
+    }
+
+    /// Peak luminance in nits, approximated from `NSScreen.maximumPotentialEDRValue`.
+    ///
+    /// The EDR multiplier is relative to the SDR reference white (203 nits for PQ).
+    /// Returns 0.0 if the display is SDR or the value cannot be determined.
+    pub fn peak_nits(&self) -> f64 {
+        let edr = self.edr_value();
+        if edr > 1.0 { edr * 203.0 } else { 0.0 }
+    }
+
+    fn edr_value(&self) -> f64 {
+        let screens = NSScreen::screens(unsafe { MainThreadMarker::new_unchecked() });
+        for screen in &screens {
+            let device_description = screen.deviceDescription();
+            let Some(screen_number) = device_description
+                .objectForKey(&NSString::from_str("NSScreenNumber"))
+            else {
+                continue;
+            };
+            let Ok(num) = screen_number.downcast::<NSNumber>() else {
+                continue;
+            };
+            if num.unsignedIntValue() == self.cg_direct_display_id {
+                return screen.maximumPotentialEDRValue() as f64;
+            }
+        }
+        1.0
     }
 
     pub fn video_recorder(&self) -> XCapResult<(ImplVideoRecorder, Receiver<Frame>)> {
