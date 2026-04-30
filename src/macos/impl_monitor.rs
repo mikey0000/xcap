@@ -275,7 +275,7 @@ impl ImplMonitor {
                 continue;
             };
             if num.unsignedIntValue() == self.cg_direct_display_id {
-                return screen.maximumPotentialEDRValue() as f64;
+                return screen.maximumPotentialExtendedDynamicRangeColorComponentValue() as f64;
             }
         }
         1.0
