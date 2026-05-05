@@ -246,6 +246,11 @@ impl ImplMonitor {
         Err(XCapError::NotSupported)
     }
 
+    pub fn capture_region_hdr(&self, x: u32, y: u32, width: u32, height: u32) -> XCapResult<HdrImage> {
+        let img = self.capture_region(x, y, width, height)?;
+        Ok(HdrImage::from_srgb_rgba8(&img))
+    }
+
     /// Returns `true` if the display supports HDR (EDR value > 1.0).
     ///
     /// Uses `NSScreen.maximumPotentialEDRValue`, available on macOS 12+.

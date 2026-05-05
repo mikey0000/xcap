@@ -1,4 +1,4 @@
-use image::{Rgb32FImage, RgbImage};
+use image::{Rgb32FImage, RgbImage, RgbaImage};
 
 /// An HDR screen capture in scRGB linear color space.
 ///
@@ -21,6 +21,27 @@ pub struct HdrImage {
 
 impl HdrImage {
     pub(crate) fn new(width: u32, height: u32, raw: Vec<u8>) -> Self {
+        Self { width, height, raw }
+    }
+
+    /// Build an `HdrImage` from an sRGB RGBA8 image.
+    ///
+    /// Each channel is converted from sRGB gamma-corrected u8 to linear f32, then
+    /// stored as f16 LE. The resulting values are in [0, 1] (no HDR highlights).
+    pub(crate) fn from_srgb_rgba8(img: &RgbaImage) -> Self {
+        let width = img.width();
+        let height = img.height();
+        let mut raw = vec![0u8; (width * height * 6) as usize];
+        let mut dst = 0usize;
+        for pixel in img.pixels() {
+            let r = f32_to_f16_le(srgb_u8_to_linear(pixel[0]));
+            let g = f32_to_f16_le(srgb_u8_to_linear(pixel[1]));
+            let b = f32_to_f16_le(srgb_u8_to_linear(pixel[2]));
+            raw[dst..dst + 2].copy_from_slice(&r);
+            raw[dst + 2..dst + 4].copy_from_slice(&g);
+            raw[dst + 4..dst + 6].copy_from_slice(&b);
+            dst += 6;
+        }
         Self { width, height, raw }
     }
 
@@ -113,6 +134,34 @@ fn linear_to_srgb_u8(linear: f32) -> u8 {
         1.055 * linear.powf(1.0 / 2.4) - 0.055
     };
     (srgb.clamp(0.0, 1.0) * 255.0 + 0.5) as u8
+}
+
+// ── f32 → f16 ─────────────────────────────────────────────────────────────────
+
+/// f32 → IEEE 754 half-precision little-endian bytes.
+fn f32_to_f16_le(v: f32) -> [u8; 2] {
+    let bits = v.to_bits();
+    let s = bits >> 31;
+    let e = ((bits >> 23) & 0xFF) as i32 - 127 + 15;
+    let m = bits & 0x7F_FFFF;
+    let half: u16 = if e >= 31 {
+        (s << 15) as u16 | 0x7C00 // clamp to Inf
+    } else if e <= 0 {
+        (s << 15) as u16 // flush to zero
+    } else {
+        ((s << 15) | ((e as u32) << 10) | (m >> 13)) as u16
+    };
+    half.to_le_bytes()
+}
+
+/// sRGB gamma u8 → linear f32 in [0, 1].
+fn srgb_u8_to_linear(v: u8) -> f32 {
+    let s = v as f32 / 255.0;
+    if s <= 0.04045 {
+        s / 12.92
+    } else {
+        ((s + 0.055) / 1.055).powf(2.4)
+    }
 }
 
 // ── f16 → f32 ─────────────────────────────────────────────────────────────────

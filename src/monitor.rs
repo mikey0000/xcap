@@ -113,6 +113,17 @@ impl Monitor {
         self.impl_monitor.capture_image_hdr()
     }
 
+    /// Capture a region of the monitor as raw HDR pixel data.
+    ///
+    /// Coordinates are in physical pixels relative to the top-left of the monitor.
+    /// On Windows (non-WGC), the region is extracted on the GPU via `CopySubresourceRegion`
+    /// so only the requested pixels are transferred to the CPU.
+    ///
+    /// Returns [`crate::XCapError::NotSupported`] on macOS, Linux, and WGC builds.
+    pub fn capture_region_hdr(&self, x: u32, y: u32, width: u32, height: u32) -> XCapResult<HdrImage> {
+        self.impl_monitor.capture_region_hdr(x, y, width, height)
+    }
+
     /// Peak display luminance in nits.
     ///
     /// - **Windows**: read from DXGI `IDXGIOutput6::GetDesc1` (`MaxLuminance`).

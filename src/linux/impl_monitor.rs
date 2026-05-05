@@ -438,6 +438,11 @@ impl ImplMonitor {
         Err(XCapError::NotSupported)
     }
 
+    pub fn capture_region_hdr(&self, x: u32, y: u32, width: u32, height: u32) -> XCapResult<HdrImage> {
+        let img = self.capture_region(x, y, width, height)?;
+        Ok(HdrImage::from_srgb_rgba8(&img))
+    }
+
     pub fn is_hdr(&self) -> bool {
         self.hdr_from_edid().map(|(hdr, _)| hdr).unwrap_or(false)
     }

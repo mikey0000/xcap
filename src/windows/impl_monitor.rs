@@ -53,7 +53,7 @@ use crate::{
 };
 
 use super::{
-    capture::{capture_monitor, capture_monitor_hdr, monitor_is_hdr},
+    capture::{capture_monitor, capture_monitor_hdr, capture_region_hdr, monitor_is_hdr},
     impl_video_recorder::ImplVideoRecorder,
     utils::{get_monitor_config, get_process_is_dpi_awareness, load_library},
 };
@@ -322,6 +322,14 @@ impl ImplMonitor {
     /// Returns [`crate::XCapError::NotSupported`] when built with the `wgc` feature.
     pub fn capture_image_hdr(&self) -> XCapResult<HdrImage> {
         capture_monitor_hdr(self)
+    }
+
+    /// Capture a region of the monitor as raw HDR pixel data.
+    ///
+    /// Coordinates are in physical pixels relative to the top-left of the monitor.
+    /// Returns [`crate::XCapError::NotSupported`] when built with the `wgc` feature.
+    pub fn capture_region_hdr(&self, x: u32, y: u32, width: u32, height: u32) -> XCapResult<HdrImage> {
+        capture_region_hdr(self, x, y, width, height)
     }
 
     /// Returns `true` if the monitor is currently in HDR mode.
