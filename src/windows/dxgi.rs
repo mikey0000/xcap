@@ -1,4 +1,5 @@
 use image::RgbaImage;
+use log::log;
 use windows::{
     Win32::{
         Foundation::HMODULE,
@@ -135,22 +136,22 @@ impl DxgiSession {
                     //   2. R10G10B10A2_UNORM  — HDR10 PQ (fallback for 8-bit/FRC panels)
                     // Fall back to IDXGIOutput1::DuplicateOutput (always BGRA8) if
                     // IDXGIOutput5 is unavailable or both formats are rejected.
-                    println!("DxgiSession::new is_hdr_display={is_hdr_display}");
+                    log::debug!("DxgiSession::new is_hdr_display={is_hdr_display}");
                     let (duplication, hdr_mode) = if is_hdr_display {
                         match output.cast::<IDXGIOutput5>() {
                             Ok(output5) => {
                                 match output5.DuplicateOutput1(&dxgi_device, 0, &[DXGI_FORMAT_R16G16B16A16_FLOAT]) {
-                                    Ok(dup) => { println!("DxgiSession: opened Float"); (dup, HdrMode::Float) }
+                                    Ok(dup) => { log::debug!("DxgiSession: opened Float"); (dup, HdrMode::Float) }
                                     Err(e) => {
-                                        println!("DuplicateOutput1 rejected R16G16B16A16_FLOAT: {e} ({:#010x})", e.code().0);
+                                        log::debug!("DuplicateOutput1 rejected R16G16B16A16_FLOAT: {e} ({:#010x})", e.code().0);
                                         match output5.DuplicateOutput1(&dxgi_device, 0, &[DXGI_FORMAT_R10G10B10A2_UNORM]) {
-                                            Ok(dup) => { println!("DxgiSession: opened Pq"); (dup, HdrMode::Pq) }
+                                            Ok(dup) => { log::debug!("DxgiSession: opened Pq"); (dup, HdrMode::Pq) }
                                             Err(e2) => {
-                                                println!("DuplicateOutput1 rejected R10G10B10A2_UNORM: {e2} ({:#010x})", e2.code().0);
+                                                log::debug!("DuplicateOutput1 rejected R10G10B10A2_UNORM: {e2} ({:#010x})", e2.code().0);
                                                 let o1 = output.cast::<IDXGIOutput1>()?;
                                                 match o1.DuplicateOutput(&dxgi_device) {
-                                                    Ok(dup) => { println!("DxgiSession: opened Sdr fallback"); (dup, HdrMode::Sdr) }
-                                                    Err(e3) => { println!("DuplicateOutput (Sdr fallback) failed: {e3} ({:#010x})", e3.code().0); return Err(e3.into()); }
+                                                    Ok(dup) => { log::debug!("DxgiSession: opened Sdr fallback"); (dup, HdrMode::Sdr) }
+                                                    Err(e3) => { log::debug!("DuplicateOutput (Sdr fallback) failed: {e3} ({:#010x})", e3.code().0); return Err(e3.into()); }
                                                 }
                                             }
                                         }
@@ -158,20 +159,20 @@ impl DxgiSession {
                                 }
                             }
                             Err(e) => {
-                                println!("DxgiSession: IDXGIOutput5 cast failed: {e}");
+                                log::debug!("DxgiSession: IDXGIOutput5 cast failed: {e}");
                                 let o1 = output.cast::<IDXGIOutput1>()?;
                                 match o1.DuplicateOutput(&dxgi_device) {
-                                    Ok(dup) => { println!("DxgiSession: opened Sdr (no Output5)"); (dup, HdrMode::Sdr) }
-                                    Err(e2) => { println!("DuplicateOutput (no Output5 fallback) failed: {e2} ({:#010x})", e2.code().0); return Err(e2.into()); }
+                                    Ok(dup) => { log::debug!("DxgiSession: opened Sdr (no Output5)"); (dup, HdrMode::Sdr) }
+                                    Err(e2) => { log::debug!("DuplicateOutput (no Output5 fallback) failed: {e2} ({:#010x})", e2.code().0); return Err(e2.into()); }
                                 }
                             }
                         }
                     } else {
-                        println!("DxgiSession: SDR display, opening Sdr session");
+                        log::debug!("DxgiSession: SDR display, opening Sdr session");
                         let o1 = output.cast::<IDXGIOutput1>()?;
                         match o1.DuplicateOutput(&dxgi_device) {
-                            Ok(dup) => { println!("DxgiSession: opened Sdr"); (dup, HdrMode::Sdr) }
-                            Err(e) => { println!("DuplicateOutput (Sdr) failed: {e} ({:#010x})", e.code().0); return Err(e.into()); }
+                            Ok(dup) => { log::debug!("DxgiSession: opened Sdr"); (dup, HdrMode::Sdr) }
+                            Err(e) => { log::debug!("DuplicateOutput (Sdr) failed: {e} ({:#010x})", e.code().0); return Err(e.into()); }
                         }
                     };
 
