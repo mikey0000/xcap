@@ -20,6 +20,7 @@ pub struct HdrImage {
 }
 
 impl HdrImage {
+    #[cfg(target_os = "windows")]
     pub(crate) fn new(width: u32, height: u32, raw: Vec<u8>) -> Self {
         Self { width, height, raw }
     }
